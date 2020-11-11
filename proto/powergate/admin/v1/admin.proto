@@ -94,6 +94,7 @@ message StorageJobsSummaryRequest {
   repeated string cids = 2;
 }
 
+
 message StorageJobsSummaryResponse {
   powergate.user.v1.JobCounts job_counts = 1;
   repeated powergate.user.v1.StorageJob queued_storage_jobs = 2;
@@ -102,7 +103,18 @@ message StorageJobsSummaryResponse {
   repeated powergate.user.v1.StorageJob latest_successful_storage_jobs = 5;
 }
 
+<<<<<<< HEAD:proto/powergate/admin/v1/admin.proto
 service AdminService {
+=======
+message GCStagedRequest {
+}
+
+message GCStagedResponse {
+	repeated string unpinned_cids = 1;
+}
+
+service PowergateAdminService {
+>>>>>>> 6e02df7... cli: add command for manual gc:proto/admin/v1/powergate_admin.proto
   // Wallet
   rpc NewAddress(NewAddressRequest) returns (NewAddressResponse) {}
   rpc Addresses(AddressesRequest) returns (AddressesResponse) {}
@@ -118,4 +130,5 @@ service AdminService {
   rpc LatestFinalStorageJobs(LatestFinalStorageJobsRequest) returns (LatestFinalStorageJobsResponse) {}
   rpc LatestSuccessfulStorageJobs(LatestSuccessfulStorageJobsRequest) returns (LatestSuccessfulStorageJobsResponse) {}
   rpc StorageJobsSummary(StorageJobsSummaryRequest) returns (StorageJobsSummaryResponse) {}
+  rpc GCStaged(GCStagedRequest) returns (GCStagedResponse) {}
 }

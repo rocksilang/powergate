@@ -89,7 +89,7 @@ func NewCustomFFSManager(t require.TestingT, ds datastore.TxnDatastore, cb lotus
 	cl := filcold.New(ms, dm, ipfsClient, fchain, l, lsm, minimumPieceSize, 1)
 	hl, err := coreipfs.New(ds, ipfsClient, l)
 	require.NoError(t, err)
-	sched, err := scheduler.New(txndstr.Wrap(ds, "ffs/scheduler"), l, hl, cl, 10, time.Minute*10, nil)
+	sched, err := scheduler.New(txndstr.Wrap(ds, "ffs/scheduler"), l, hl, cl, 10, time.Minute*10, nil, scheduler.GCConfig{AutoGCInterval: 0})
 	require.NoError(t, err)
 
 	wm, err := walletModule.New(cb, masterAddr, *big.NewInt(iWalletBal), false, "")

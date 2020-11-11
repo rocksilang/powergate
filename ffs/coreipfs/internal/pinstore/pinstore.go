@@ -153,6 +153,72 @@ func (s *Store) IsPinnedInNode(c cid.Cid) bool {
 	return ok
 }
 
+func (s *Store) Remove(iid ffs.APIID, c cid.Cid) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	r, ok := s.cache[c]
+	if !ok {
+		return fmt.Errorf("c1 isn't pinned")
+	}
+
+	c1idx := -1
+	for i, p := range r.Pins {
+		if p.APIID == iid {
+			c1idx = i
+			break
+		}
+	}
+	if c1idx == -1 {
+		return nil
+	}
+	r.Pins[c1idx] = r.Pins[len(r.Pins)-1]
+	r.Pins = r.Pins[:len(r.Pins)-1]
+
+	return s.persist(r)
+}
+
+func (s *Store) RemoveStaged(c cid.Cid) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	pc1, ok := s.cache[c]
+	if !ok {
+		return fmt.Errorf("c1 isn't pinned")
+	}
+
+	for _, p := range pc1.Pins {
+		if !p.Stage {
+			return fmt.Errorf("all pins should be stage type")
+		}
+	}
+
+	if err := s.ds.Delete(makeKey(c)); err != nil {
+		return fmt.Errorf("deleting from datastore: %s", err)
+	}
+	s.cache[c] = pc1
+
+	return nil
+}
+
+func (s *Store) GetAllOnlyStaged() ([]PinnedCid, error) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	var res []PinnedCid
+Loop:
+	for _, v := range s.cache {
+		for _, p := range v.Pins {
+			if !p.Stage {
+				continue Loop
+			}
+		}
+
+		res = append(res, v)
+	}
+	return res, nil
+}
+
 // persist persists a PinnedCid in the datastore.
 func (s *Store) persist(r PinnedCid) error {
 	buf, err := json.Marshal(r)
@@ -189,61 +255,6 @@ func populateCache(ds datastore.TxnDatastore) (map[cid.Cid]PinnedCid, error) {
 	return ret, nil
 }
 
-/*
-func (s *Store) RemoveStaged(c cid.Cid) error {
-	key := makeStagedKey(c)
-	if err := s.ds.Delete(key); err != nil {
-		return fmt.Errorf("delete in datastore: %s", err)
-	}
-	return nil
-}
-
-func (s *Store) GetAllStaged() ([]PinnedCid, error) {
-	txn, err := s.ds.NewTransaction(true)
-	if err != nil {
-		return nil, fmt.Errorf("creating txn: %s", err)
-	}
-	defer txn.Discard()
-
-	q := query.Query{Prefix: stagedBase.String()}
-	res, err := txn.Query(q)
-	if err != nil {
-		return nil, fmt.Errorf("executing query: %s", err)
-	}
-	defer res.Close()
-
-	var ret []PinnedCid
-	for res := range res.Next() {
-		if res.Error != nil {
-			return nil, fmt.Errorf("query item result: %s", err)
-		}
-		var pc PinnedCid
-		if err := json.Unmarshal(res.Value, &pc); err != nil {
-			return nil, fmt.Errorf("unmarshaling result: %s", err)
-		}
-		ret = append(ret, pc)
-	}
-
-	return ret, nil
-}
-*/
-
 func makeKey(c cid.Cid) datastore.Key {
 	return pinBaseKey.ChildString(c.String())
 }
-
-/*
-func (ci *CoreIpfs) fillPinsetCache(ctx context.Context) error {
-	pins, err := ci.ipfs.Pin().Ls(ctx, options.Pin.Ls.Recursive())
-	if err != nil {
-		return fmt.Errorf("getting pins from IPFS: %s", err)
-	}
-	ci.lock.Lock()
-	defer ci.lock.Unlock()
-	ci.pinset = make(map[cid.Cid]struct{}, len(pins))
-	for p := range pins {
-		ci.pinset[p.Path().Cid()] = struct{}{}
-	}
-	return nil
-}
-*/

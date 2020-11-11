@@ -503,7 +503,8 @@ func (s *RPC) SendFil(ctx context.Context, req *SendFilRequest) (*SendFilRespons
 // Stage allows you to temporarily cache data in the Hot layer in preparation for pushing a cid storage config.
 func (s *RPC) Stage(srv RPCService_StageServer) error {
 	// check that an API instance exists so not just anyone can add data to the hot layer
-	if _, err := s.getInstanceByToken(srv.Context()); err != nil {
+	fapi, err := s.getInstanceByToken(srv.Context())
+	if err != nil {
 		return err
 	}
 
@@ -516,7 +517,7 @@ func (s *RPC) Stage(srv RPCService_StageServer) error {
 
 	go receiveFile(srv, writer)
 
-	c, err := s.hot.Stage(srv.Context(), reader)
+	c, err := s.hot.Stage(srv.Context(), fapi.ID(), reader)
 	if err != nil {
 		return fmt.Errorf("adding data to hot storage: %s", err)
 	}

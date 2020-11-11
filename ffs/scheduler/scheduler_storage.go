@@ -217,16 +217,16 @@ func (s *Scheduler) executeStorage(ctx context.Context, a astore.StorageAction, 
 	var hot ffs.HotInfo
 	if a.Cfg.Hot.Enabled {
 		s.l.Log(ctx, "Executing Hot-Storage configuration...")
-		hot, err = s.executeEnabledHotStorage(ctx, ci, a.Cfg.Hot, a.Cfg.Cold.Filecoin.Addr, a.ReplacedCid)
+		hot, err = s.executeEnabledHotStorage(ctx, a.APIID, ci, a.Cfg.Hot, a.Cfg.Cold.Filecoin.Addr, a.ReplacedCid)
 		if err != nil {
 			s.l.Log(ctx, "Enabled Hot-Storage excution failed.")
-			return ffs.CidInfo{}, nil, fmt.Errorf("executing enabled hot-storage: %s", err)
+			return ffs.StorageInfo{}, nil, fmt.Errorf("executing enabled hot-storage: %s", err)
 		}
 		s.l.Log(ctx, "Hot-Storage configuration ran successfully.")
 	}
 
 	s.l.Log(ctx, "Executing Cold-Storage configuration...")
-	cold, errors, err := s.executeColdStorage(ctx, ci, a.Cfg.Cold)
+	cold, errors, err := s.executeColdStorage(ctx, ci, a.Cfg.Cold, dealUpdates)
 	if err != nil {
 		s.l.Log(ctx, "Cold-Storage execution failed.")
 		return ffs.StorageInfo{}, errors, fmt.Errorf("executing cold-storage config: %s", err)
@@ -235,9 +235,9 @@ func (s *Scheduler) executeStorage(ctx context.Context, a astore.StorageAction, 
 
 	if !a.Cfg.Hot.Enabled {
 		s.l.Log(ctx, "Executing Hot-Storage configuration...")
-		if err := s.executeDisabledHotStorage(ctx, a.Cid); err != nil {
+		if err := s.executeDisabledHotStorage(ctx, a.APIID, a.Cid); err != nil {
 			s.l.Log(ctx, "Disabled Hot-Storage execution failed.")
-			return ffs.CidInfo{}, nil, fmt.Errorf("executing disabled hot-storage: %s", err)
+			return ffs.StorageInfo{}, nil, fmt.Errorf("executing disabled hot-storage: %s", err)
 		}
 		s.l.Log(ctx, "Hot-Storage configuration ran successfully.")
 	}
@@ -252,8 +252,8 @@ func (s *Scheduler) executeStorage(ctx context.Context, a astore.StorageAction, 
 }
 
 // ensureCorrectPinning ensures that the Cid has the correct pinning flag in hot storage.
-func (s *Scheduler) executeDisabledHotStorage(ctx context.Context, c cid.Cid) error {
-	ok, err := s.hs.IsPinned(ctx, c)
+func (s *Scheduler) executeDisabledHotStorage(ctx context.Context, iid ffs.APIID, c cid.Cid) error {
+	ok, err := s.hs.IsPinned(ctx, iid, c)
 	if err != nil {
 		return fmt.Errorf("getting pinned status: %s", err)
 	}
@@ -261,7 +261,7 @@ func (s *Scheduler) executeDisabledHotStorage(ctx context.Context, c cid.Cid) er
 		s.l.Log(ctx, "Data was already unpinned.")
 		return nil
 	}
-	if err := s.hs.Unpin(ctx, c); err != nil {
+	if err := s.hs.Unpin(ctx, iid, c); err != nil {
 		return fmt.Errorf("unpinning cid %s: %s", c, err)
 	}
 	s.l.Log(ctx, "Data was unpinned.")
@@ -270,7 +270,7 @@ func (s *Scheduler) executeDisabledHotStorage(ctx context.Context, c cid.Cid) er
 }
 
 // executeEnabledHotStorageEnabled runs the logic if the Job has Hot Storage enabled.
-func (s *Scheduler) executeEnabledHotStorage(ctx context.Context, curr ffs.CidInfo, cfg ffs.HotConfig, waddr string, replaceCid cid.Cid) (ffs.HotInfo, error) {
+func (s *Scheduler) executeEnabledHotStorage(ctx context.Context, iid ffs.APIID, curr ffs.CidInfo, cfg ffs.HotConfig, waddr string, replaceCid cid.Cid) (ffs.HotInfo, error) {
 	if curr.Hot.Enabled {
 		s.l.Log(ctx, "No actions needed in enabling Hot Storage.")
 		return curr.Hot, nil
@@ -284,10 +284,10 @@ func (s *Scheduler) executeEnabledHotStorage(ctx context.Context, curr ffs.CidIn
 	var size int
 	var err error
 	if !replaceCid.Defined() {
-		size, err = s.hs.Pin(sctx, curr.Cid)
+		size, err = s.hs.Pin(sctx, iid, curr.Cid)
 	} else {
 		s.l.Log(ctx, "Replace of previous pin %s", replaceCid)
-		size, err = s.hs.Replace(sctx, replaceCid, curr.Cid)
+		size, err = s.hs.Replace(sctx, iid, replaceCid, curr.Cid)
 	}
 	if err != nil {
 		s.l.Log(ctx, "Direct fetching from IPFS wasn't possible.")
@@ -313,7 +313,7 @@ func (s *Scheduler) executeEnabledHotStorage(ctx context.Context, curr ffs.CidIn
 			return ffs.HotInfo{}, fmt.Errorf("unfreezing from Cold Storage: %s", err)
 		}
 		s.l.Log(ctx, "Unfrozen successfully from %s with cost %d attoFil, saving in Hot-Storage...", fi.RetrievedMiner, fi.FundsSpent)
-		size, err = s.hs.Pin(ctx, curr.Cold.Filecoin.DataCid)
+		size, err = s.hs.Pin(ctx, iid, curr.Cold.Filecoin.DataCid)
 		if err != nil {
 			return ffs.HotInfo{}, fmt.Errorf("pinning unfrozen cid: %s", err)
 		}
@@ -327,7 +327,7 @@ func (s *Scheduler) executeEnabledHotStorage(ctx context.Context, curr ffs.CidIn
 	}, nil
 }
 
-func (s *Scheduler) getRefreshedInfo(ctx context.Context, c cid.Cid) (ffs.StorageInfo, error) {
+func (s *Scheduler) getRefreshedInfo(ctx context.Context, iid ffs.APIID, c cid.Cid) (ffs.StorageInfo, error) {
 	var err error
 	ci, err := s.cis.Get(c)
 	if err != nil {
@@ -337,7 +337,7 @@ func (s *Scheduler) getRefreshedInfo(ctx context.Context, c cid.Cid) (ffs.Storag
 		return ffs.StorageInfo{Cid: c}, nil // Default value has both storages disabled
 	}
 
-	ci.Hot, err = s.getRefreshedHotInfo(ctx, c, ci.Hot)
+	ci.Hot, err = s.getRefreshedHotInfo(ctx, iid, c, ci.Hot)
 	if err != nil {
 		return ffs.StorageInfo{}, fmt.Errorf("getting refreshed hot info: %s", err)
 	}
@@ -350,9 +350,9 @@ func (s *Scheduler) getRefreshedInfo(ctx context.Context, c cid.Cid) (ffs.Storag
 	return ci, nil
 }
 
-func (s *Scheduler) getRefreshedHotInfo(ctx context.Context, c cid.Cid, curr ffs.HotInfo) (ffs.HotInfo, error) {
+func (s *Scheduler) getRefreshedHotInfo(ctx context.Context, iid ffs.APIID, c cid.Cid, curr ffs.HotInfo) (ffs.HotInfo, error) {
 	var err error
-	curr.Enabled, err = s.hs.IsPinned(ctx, c)
+	curr.Enabled, err = s.hs.IsPinned(ctx, iid, c)
 	if err != nil {
 		return ffs.HotInfo{}, err
 	}

@@ -84,7 +84,7 @@ func TestResumeScheduler(t *testing.T) {
 	ipfs, ipfsMAddr := itmanager.CreateIPFS(t)
 	addr, client, ms := itmanager.NewDevnet(t, 1, ipfsMAddr)
 	manager, closeManager := itmanager.NewFFSManager(t, ds, client, addr, ms, ipfs)
-	_, auth, err := manager.Create(context.Background())
+	auth, err := manager.Create(context.Background())
 	require.NoError(t, err)
 	time.Sleep(time.Second * 3) // Wait for funding txn to finish.
 	fapi, err := manager.GetByAuthToken(auth.Token)

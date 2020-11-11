@@ -12,6 +12,7 @@ func init() {
 		adminJobsCmd,
 		adminUsersCmd,
 		adminWalletCmd,
+		adminDataCmd,
 	)
 }
 

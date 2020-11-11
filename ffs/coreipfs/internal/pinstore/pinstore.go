@@ -33,7 +33,7 @@ type PinnedCid struct {
 // APIID.
 type Pin struct {
 	APIID     ffs.APIID
-	Stage     bool
+	Staged    bool
 	CreatedAt int64
 }
 
@@ -56,21 +56,30 @@ func (s *Store) AddStaged(iid ffs.APIID, c cid.Cid) error {
 		r = PinnedCid{Cid: c}
 	}
 
-	for _, p := range r.Pins {
+	for i, p := range r.Pins {
 		if p.APIID == iid {
-			// Looks like the APIID had this Cid
-			// pinned with Hot Storage, and later
-			// decided to stage the Cid again.
-			// Don't mark this Cid as stage-pin since
-			// that would be wrong; keep the strong pin.
-			// This Cid isn't GCable.
-			return nil
+			if !p.Staged {
+				// Looks like the APIID had this Cid
+				// pinned with Hot Storage, and later
+				// decided to stage the Cid again.
+				// Don't mark this Cid as stage-pin since
+				// that would be wrong; keep the strong pin.
+				// This Cid isn't GCable.
+				return nil
+			}
+			// If the Cid is pinned because of a stage,
+			// and is re-staged then simply update its
+			// CreatedAt, so it will survive longer to a
+			// GC.
+			r.Pins[i].CreatedAt = time.Now().Unix()
+			return s.persist(r)
 		}
 	}
 
+	// If the Cid is not present, create it as a staged pin.
 	p := Pin{
 		APIID:     iid,
-		Stage:     true,
+		Staged:    true,
 		CreatedAt: time.Now().Unix(),
 	}
 	r.Pins = append(r.Pins, p)
@@ -102,13 +111,19 @@ func (s *Store) Add(iid ffs.APIID, c cid.Cid) error {
 	}
 	*p = Pin{
 		APIID:     iid,
-		Stage:     false,
+		Staged:    false,
 		CreatedAt: time.Now().Unix(),
 	}
 
 	return s.persist(r)
 }
 
+// RefCount returns two integers (total, staged).
+// total is the total number of ref counts for the Cid.
+// staged is the total number of ref counts corresponding to
+// staged pins. total includes staged, this means that:
+// * total >= staged
+// * non-staged pins = total - staged
 func (s *Store) RefCount(c cid.Cid) (int, int) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
@@ -120,7 +135,7 @@ func (s *Store) RefCount(c cid.Cid) (int, int) {
 
 	var stagedPins int
 	for _, p := range r.Pins {
-		if p.Stage {
+		if p.Staged {
 			stagedPins++
 		}
 	}
@@ -128,7 +143,9 @@ func (s *Store) RefCount(c cid.Cid) (int, int) {
 	return len(r.Pins), stagedPins
 }
 
-func (s *Store) IsPinned(iid ffs.APIID, c cid.Cid) bool {
+// IsPinnedBy returns true if the Cid is pinned for APIID.
+// Both strong and staged pins are considered.
+func (s *Store) IsPinnedBy(iid ffs.APIID, c cid.Cid) bool {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
@@ -145,7 +162,7 @@ func (s *Store) IsPinned(iid ffs.APIID, c cid.Cid) bool {
 	return false
 }
 
-func (s *Store) IsPinnedInNode(c cid.Cid) bool {
+func (s *Store) IsPinned(c cid.Cid) bool {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
@@ -188,7 +205,7 @@ func (s *Store) RemoveStaged(c cid.Cid) error {
 	}
 
 	for _, p := range pc1.Pins {
-		if !p.Stage {
+		if !p.Staged {
 			return fmt.Errorf("all pins should be stage type")
 		}
 	}
@@ -209,7 +226,7 @@ func (s *Store) GetAllOnlyStaged() ([]PinnedCid, error) {
 Loop:
 	for _, v := range s.cache {
 		for _, p := range v.Pins {
-			if !p.Stage {
+			if !p.Staged {
 				continue Loop
 			}
 		}

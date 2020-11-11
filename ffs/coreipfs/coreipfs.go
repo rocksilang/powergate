@@ -27,11 +27,9 @@ var (
 // into a remote go-ipfs using the HTTP API.
 type CoreIpfs struct {
 	ipfs iface.CoreAPI
-	l    ffs.JobLogger
 	ps   *pinstore.Store
 
-	lock   sync.Mutex
-	pinset map[cid.Cid]struct{}
+	lock sync.Mutex
 }
 
 var _ ffs.HotStorage = (*CoreIpfs)(nil)
@@ -40,55 +38,47 @@ var _ ffs.HotStorage = (*CoreIpfs)(nil)
 func New(ds datastore.TxnDatastore, ipfs iface.CoreAPI, l ffs.JobLogger) (*CoreIpfs, error) {
 	ps, err := pinstore.New(txndstr.Wrap(ds, "pinstore"))
 	if err != nil {
-		return nil, fmt.Errorf("loading stroage jobstore: %s", err)
+		return nil, fmt.Errorf("loading pinstore: %s", err)
 	}
 	ci := &CoreIpfs{
 		ipfs: ipfs,
-		l:    l,
 		ps:   ps,
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
-	defer cancel()
-	if err := ci.fillPinsetCache(ctx); err != nil {
-		return nil, err
 	}
 	return ci, nil
 }
 
-// Unpin unpins a cid.
-func (ci *CoreIpfs) Unpin(ctx context.Context, c cid.Cid) error {
-	return ci.unpin(ctx, c)
+// Unpin unpins a Cid for an APIID.
+func (ci *CoreIpfs) Unpin(ctx context.Context, iid ffs.APIID, c cid.Cid) error {
+	return ci.unpin(ctx, iid, c)
 }
 
-// IsPinned return true if a particular Cid is pinned, both for
-// staged or stored cases.
-func (ci *CoreIpfs) IsPinned(ctx context.Context, c cid.Cid) (bool, error) {
-	_, ok := ci.pinset[c]
-	return ok, nil
-}
-
-// Stage adds an io.Reader data as file in the IPFS node. The Cid isn't considered fully
-// pinned, and may be unpined by GCStaged().
-func (ci *CoreIpfs) Stage(ctx context.Context, r io.Reader) (cid.Cid, error) {
-	log.Debugf("adding data-stream...")
+// Stage creates a stage-pin for a data stream for an APIID. This pin can be considered unpinnable
+// automatically by GCStaged().
+func (ci *CoreIpfs) Stage(ctx context.Context, iid ffs.APIID, r io.Reader) (cid.Cid, error) {
 	p, err := ci.ipfs.Unixfs().Add(ctx, ipfsfiles.NewReaderFile(r), options.Unixfs.Pin(true))
 	if err != nil {
 		return cid.Undef, fmt.Errorf("adding data to ipfs: %s", err)
 	}
 
-	if err := ci.ps.AddStaged(p.Cid()); err != nil {
-		return cid.Cid{}, fmt.Errorf("adding transient pin: %s", err)
+	// APIID already pinned this Cid,  no ref count to update here.
+	// May happen if the user is staging mutiple times
+	// the same data for no reason, or staging the data
+	// again after it was already pinned by Hot Storage.
+	// In any case, the ref count is already counted for
+	// this APIID, nothing to do.
+	if ci.ps.IsPinned(iid, p.Cid()) {
+		return p.Cid(), nil
 	}
-	ci.lock.Lock()
-	ci.pinset[p.Cid()] = struct{}{}
-	ci.lock.Unlock()
-	log.Debugf("data-stream added with cid %s", p.Cid())
+
+	if err := ci.ps.AddStaged(iid, p.Cid()); err != nil {
+		return cid.Undef, fmt.Errorf("saving new pin in pinstore: %s", err)
+	}
+
 	return p.Cid(), nil
 }
 
 // Get retrieves a cid from the IPFS node.
 func (ci *CoreIpfs) Get(ctx context.Context, c cid.Cid) (io.Reader, error) {
-	log.Debugf("getting cid %s", c)
 	n, err := ci.ipfs.Unixfs().Get(ctx, path.IpfsPath(c))
 	if err != nil {
 		return nil, fmt.Errorf("getting cid %s from ipfs: %s", c, err)
@@ -100,58 +90,86 @@ func (ci *CoreIpfs) Get(ctx context.Context, c cid.Cid) (io.Reader, error) {
 	return file, nil
 }
 
-// Pin a cid in the underlying storage. If the cid was already pinned by a stage,
-// the Cid is considered fully-pinned.
-func (ci *CoreIpfs) Pin(ctx context.Context, c cid.Cid) (int, error) {
-	log.Debugf("fetching and pinning cid %s", c)
+// Pin a cid for an APIID. If the cid was already pinned by a stage from APIID,
+// the Cid is considered fully-pinned and not a candidate to be unpinned by GCStaged().
+func (ci *CoreIpfs) Pin(ctx context.Context, iid ffs.APIID, c cid.Cid) (int, error) {
 	p := path.IpfsPath(c)
-	if err := ci.ipfs.Pin().Add(ctx, p, options.Pin.Recursive(true)); err != nil {
-		return 0, fmt.Errorf("pinning cid %s: %s", c, err)
+
+	// If some APIID already pinned this Cid in the underlying go-ipfs node, then
+	// we don't need to call the Pin API, just count the reference from this APIID.
+	if !ci.ps.IsPinnedInNode(c) {
+		if err := ci.ipfs.Pin().Add(ctx, p, options.Pin.Recursive(true)); err != nil {
+			return 0, fmt.Errorf("pinning cid %s: %s", c, err)
+		}
 	}
 	s, err := ci.ipfs.Object().Stat(ctx, p)
 	if err != nil {
 		return 0, fmt.Errorf("getting stats of cid %s: %s", c, err)
 	}
-	if err := ci.ps.RemoveStaged(c); err != nil {
-		return 0, fmt.Errorf("deleting transient pin: %s", err)
+
+	// Count +1 reference to this Cid by APIID.
+	if err := ci.ps.Add(iid, p.Cid()); err != nil {
+		return 0, fmt.Errorf("saving new pin in pinstore: %s", err)
 	}
-	ci.lock.Lock()
-	ci.pinset[c] = struct{}{}
-	ci.lock.Unlock()
+
 	return s.CumulativeSize, nil
 }
 
 // Replace moves the pin from c1 to c2. If c2 was already pinned from a stage,
 // it's considered fully-pinned.
-func (ci *CoreIpfs) Replace(ctx context.Context, c1 cid.Cid, c2 cid.Cid) (int, error) {
+func (ci *CoreIpfs) Replace(ctx context.Context, iid ffs.APIID, c1 cid.Cid, c2 cid.Cid) (int, error) {
 	p1 := path.IpfsPath(c1)
 	p2 := path.IpfsPath(c2)
-	log.Debugf("updating pin from %s to %s", p1, p2)
-	if err := ci.ipfs.Pin().Update(ctx, p1, p2); err != nil {
-		return 0, fmt.Errorf("updating pin %s to %s: %s", c1, c2, err)
+
+	c1refcount, _ := ci.ps.RefCount(c1)
+	c2refcount, _ := ci.ps.RefCount(c2)
+
+	if c1refcount == 0 {
+		return 0, fmt.Errorf("c1 pin from replace isn't pinned")
 	}
-	if err := ci.ps.RemoveStaged(c2); err != nil {
-		return 0, fmt.Errorf("removing transient pin: %s", err)
+
+	// If c1 has a single reference, which must be from iid, and c2 isn't pinned
+	// then move the pin, which is the fastest way to unpin and pin two cids that might
+	// share part of the dag.
+	if c1refcount == 1 && c2refcount == 0 {
+		if err := ci.ipfs.Pin().Update(ctx, p1, p2); err != nil {
+			return 0, fmt.Errorf("updating pin %s to %s: %s", c1, c2, err)
+		}
+	} else if c2refcount == 0 {
+		// - c1 is pinned by another iid, so we can't unpin it.
+		// - c2 isn't pinned by anyone, so we should pin it.
+		if err := ci.ipfs.Pin().Add(ctx, p2, options.Pin.Recursive(true)); err != nil {
+			return 0, fmt.Errorf("pinning cid %s: %s", c2, err)
+		}
+	} else {
+		// - c1 is pinned by another iid, so we can't unpin it.
+		// - c2 is pinned by some other iid, so it's already pinned in the node, no need to do it.
 	}
+
+	// In any case of above if, update the ref counts.
+
 	stat, err := ci.ipfs.Object().Stat(ctx, p2)
 	if err != nil {
 		return 0, fmt.Errorf("getting stats of cid %s: %s", c2, err)
 	}
-	ci.lock.Lock()
-	delete(ci.pinset, c1)
-	ci.pinset[c2] = struct{}{}
-	ci.lock.Unlock()
+
+	// Decrease for iid refcount by one to c1, and increase by one to c2.
+	if err := ci.ps.Swap(iid, c1, c2); err != nil {
+		return 0, fmt.Errorf("replace cids in pinstore: %s", err)
+	}
 
 	return stat.CumulativeSize, nil
 }
 
+// GCStaged unpins Cids that are only pinned by Stage() calls and all pins satisfy the filters.
 func (ci *CoreIpfs) GCStaged(ctx context.Context, exclude []cid.Cid, olderThan time.Time) ([]cid.Cid, error) {
 	unpinLst, err := ci.getGCCandidates(ctx, exclude, olderThan)
 	if err != nil {
 		return nil, fmt.Errorf("getting gc cid candidates: %s", err)
 	}
+
 	for _, c := range unpinLst {
-		if err := ci.unpin(ctx, c); err != nil {
+		if err := ci.unpinStaged(ctx, c); err != nil {
 			return nil, fmt.Errorf("unpinning cid from ipfs node: %s", err)
 		}
 	}
@@ -160,7 +178,7 @@ func (ci *CoreIpfs) GCStaged(ctx context.Context, exclude []cid.Cid, olderThan t
 }
 
 func (ci *CoreIpfs) getGCCandidates(ctx context.Context, exclude []cid.Cid, olderThan time.Time) ([]cid.Cid, error) {
-	lst, err := ci.ps.GetAllStaged()
+	lst, err := ci.ps.GetAllOnlyStaged()
 	if err != nil {
 		return nil, fmt.Errorf("get staged pins: %s", err)
 	}
@@ -171,45 +189,68 @@ func (ci *CoreIpfs) getGCCandidates(ctx context.Context, exclude []cid.Cid, olde
 	}
 
 	var unpinList []cid.Cid
+Loop:
 	for _, stagedPin := range lst {
-		if stagedPin.CreatedAt > olderThan.Unix() {
-			continue
-		}
+		// Skip Cids that are excluded.
 		if _, ok := excludeMap[stagedPin.Cid]; ok {
 			log.Infof("skipping staged cid %s since it's in exclusion list", stagedPin)
-			continue
+			continue Loop
 		}
+		// A Cid is only safe to GC if all existing stage-pin are older than
+		// specified parameter. If any iid stage-pined the Cid more recently than olderThan
+		// we still have to wait a bit more to consider it for GC.
+		for _, sp := range stagedPin.Pins {
+			if sp.CreatedAt > olderThan.Unix() {
+				continue Loop
+			}
+
+		}
+
+		// The Cid only has staged-pins, and all iids that staged it aren't in exclusion list
+		// plus are older than olderThan ==> Safe to GCed.
 		unpinList = append(unpinList, stagedPin.Cid)
 	}
 
 	return unpinList, nil
 }
 
-func (ci *CoreIpfs) unpin(ctx context.Context, c cid.Cid) error {
-	if err := ci.ipfs.Pin().Rm(ctx, path.IpfsPath(c), options.Pin.RmRecursive(true)); err != nil {
-		return fmt.Errorf("unpinning cid from ipfs node: %s", err)
-	}
-	if err := ci.ps.RemoveStaged(c); err != nil {
-		return fmt.Errorf("deleting transient pin: %s", err)
+func (ci *CoreIpfs) unpin(ctx context.Context, iid ffs.APIID, c cid.Cid) error {
+	count, _ := ci.ps.RefCount(c)
+	if count == 0 {
+		return fmt.Errorf("cid %s for %s isn't pinned", c, iid)
 	}
 
-	ci.lock.Lock()
-	delete(ci.pinset, c)
-	ci.lock.Unlock()
+	if count == 1 {
+		// There aren't more pinnings for this Cid, let's unpin from IPFS.
+		log.Infof("unpinning cid %s with ref count 0", c)
+		if err := ci.ipfs.Pin().Rm(ctx, path.IpfsPath(c), options.Pin.RmRecursive(true)); err != nil {
+			return fmt.Errorf("unpinning cid from ipfs node: %s", err)
+		}
+	}
+
+	if err := ci.ps.Remove(iid, c); err != nil {
+		return fmt.Errorf("removing cid from pinstore: %s", err)
+	}
 
 	return nil
 }
 
-func (ci *CoreIpfs) fillPinsetCache(ctx context.Context) error {
-	pins, err := ci.ipfs.Pin().Ls(ctx, options.Pin.Ls.Recursive())
-	if err != nil {
-		return fmt.Errorf("getting pins from IPFS: %s", err)
+func (ci *CoreIpfs) unpinStaged(ctx context.Context, c cid.Cid) error {
+	count, stagedCount := ci.ps.RefCount(c)
+
+	// Just in case, verify that the total number of pins are equal
+	// to stage-pins. That is, nobody is pinning this Cid apart from Stage() calls.
+	if count != stagedCount {
+		return fmt.Errorf("cid %s hasn't only stage-pins, total %d staged %d", count, stagedCount)
 	}
-	ci.lock.Lock()
-	defer ci.lock.Unlock()
-	ci.pinset = make(map[cid.Cid]struct{}, len(pins))
-	for p := range pins {
-		ci.pinset[p.Path().Cid()] = struct{}{}
+
+	if err := ci.ipfs.Pin().Rm(ctx, path.IpfsPath(c), options.Pin.RmRecursive(true)); err != nil {
+		return fmt.Errorf("unpinning cid from ipfs node: %s", err)
 	}
+
+	if err := ci.ps.RemoveStaged(c); err != nil {
+		return fmt.Errorf("removing all staged pins for %s: %s", c, err)
+	}
+
 	return nil
 }

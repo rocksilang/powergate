@@ -8,125 +8,411 @@ import (
 	"time"
 
 	"github.com/ipfs/go-cid"
+	ipfsfiles "github.com/ipfs/go-ipfs-files"
 	httpapi "github.com/ipfs/go-ipfs-http-client"
+	"github.com/ipfs/interface-go-ipfs-core/options"
 	"github.com/stretchr/testify/require"
+	"github.com/textileio/powergate/ffs"
 	it "github.com/textileio/powergate/ffs/integrationtest"
 	"github.com/textileio/powergate/ffs/joblogger"
 	"github.com/textileio/powergate/tests"
 	txndstr "github.com/textileio/powergate/txndstransform"
 )
 
-func TestStagePinUnpin(t *testing.T) {
+func TestStage(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	coreipfs, ipfs := newCoreIPFS(t)
-
 	r := rand.New(rand.NewSource(22))
+
+	ci, ipfs := newCoreIPFS(t)
+	data := it.RandomBytes(r, 1500)
+	iid := ffs.NewAPIID()
+
+	c, err := ci.Stage(ctx, iid, bytes.NewReader(data))
+	require.NoError(t, err)
+	it.RequireIpfsPinnedCid(ctx, t, c, ipfs)
+	requireCidIsGCable(t, ci, c)
+	okPinned, err := ci.IsPinned(ctx, iid, c)
+	require.NoError(t, err)
+	require.True(t, okPinned)
+	requireRefCount(t, ci, c, 0, 1)
+
+	// Re-stage and test ref count is stil 1.
+	c, err = ci.Stage(ctx, iid, bytes.NewReader(data))
+	require.NoError(t, err)
+	requireRefCount(t, ci, c, 0, 1)
+}
+
+func TestStagePinStage(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := rand.New(rand.NewSource(22))
+
+	ci, ipfs := newCoreIPFS(t)
+	data := it.RandomBytes(r, 1500)
+	iid := ffs.NewAPIID()
+
+	// Stage
+	c, err := ci.Stage(ctx, iid, bytes.NewReader(data))
+	require.NoError(t, err)
+	requireRefCount(t, ci, c, 0, 1)
+
+	// Pin that Cid.
+	_, err = ci.Pin(ctx, iid, c)
+	require.NoError(t, err)
+	requireRefCount(t, ci, c, 1, 0)
+
+	// Stage again, it shouldn't be GCable.
+	c2, err := ci.Stage(ctx, iid, bytes.NewReader(data))
+	require.NoError(t, err)
+	require.Equal(t, c, c2)
+	it.RequireIpfsPinnedCid(ctx, t, c2, ipfs)
+	requireCidIsNotGCable(t, ci, c2)
+	okPinned, err := ci.IsPinned(ctx, iid, c)
+	require.NoError(t, err)
+	require.True(t, okPinned)
+	requireRefCount(t, ci, c, 1, 0)
+}
+
+func TestPinAndRePin(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := rand.New(rand.NewSource(22))
+
+	ci, ipfs := newCoreIPFS(t)
+	data := it.RandomBytes(r, 1500)
+	iid := ffs.NewAPIID()
+
+	rd := ipfsfiles.NewReaderFile(bytes.NewReader(data))
+	p, err := ipfs.Unixfs().Add(ctx, rd, options.Unixfs.Pin(false))
+	require.NoError(t, err)
+	c := p.Cid()
+
+	size, err := ci.Pin(ctx, iid, c)
+	require.NoError(t, err)
+	require.Greater(t, size, 0)
+	it.RequireIpfsPinnedCid(ctx, t, c, ipfs)
+	requireCidIsNotGCable(t, ci, c)
+	okPinned, err := ci.IsPinned(ctx, iid, c)
+	require.NoError(t, err)
+	require.True(t, okPinned)
+	requireRefCount(t, ci, c, 1, 0)
+
+	// Pin again, check that ref count is still 1.
+	_, err = ci.Pin(ctx, iid, c)
+	require.NoError(t, err)
+	requireRefCount(t, ci, c, 1, 0)
+}
+
+func TestUnpin(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := rand.New(rand.NewSource(22))
+
+	ci, ipfs := newCoreIPFS(t)
+	data := it.RandomBytes(r, 1500)
+	iid := ffs.NewAPIID()
+
+	rd := ipfsfiles.NewReaderFile(bytes.NewReader(data))
+	p, err := ipfs.Unixfs().Add(ctx, rd, options.Unixfs.Pin(false))
+	require.NoError(t, err)
+	c := p.Cid()
+
+	// Test unpin an unpinned cid.
+	err = ci.Unpin(ctx, iid, c)
+	require.Equal(t, ErrUnpinnedCid, err)
+
+	// Test pin and unpin.
+	requireRefCount(t, ci, c, 0, 0)
+	_, err = ci.Pin(ctx, iid, c)
+	require.NoError(t, err)
+
+	err = ci.Unpin(ctx, iid, c)
+	require.NoError(t, err)
+	requireRefCount(t, ci, c, 0, 0)
+
+	// Test unpin an unpinned cid again.
+	err = ci.Unpin(ctx, iid, c)
+	require.Equal(t, ErrUnpinnedCid, err)
+}
+
+func TestReplaceThatUnpinAndPin(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := rand.New(rand.NewSource(22))
+
+	ci, ipfs := newCoreIPFS(t)
+	iid := ffs.NewAPIID()
+
+	// Pin c1
+	data := it.RandomBytes(r, 1500)
+	c1, err := ci.Stage(ctx, iid, bytes.NewReader(data))
+	require.NoError(t, err)
+	_, err = ci.Pin(ctx, iid, c1)
+	require.NoError(t, err)
+	requireRefCount(t, ci, c1, 1, 0)
+
+	// Stage data2
+	data2 := it.RandomBytes(r, 1500)
+	c2, err := ci.Stage(ctx, iid, bytes.NewReader(data2))
+	require.NoError(t, err)
+	requireRefCount(t, ci, c2, 0, 1)
+
+	// Replace
+	size, err := ci.Replace(ctx, iid, c1, c2)
+	require.NoError(t, err)
+	require.Greater(t, size, 0)
+
+	// Post checks
+	it.RequireIpfsUnpinnedCid(ctx, t, c1, ipfs) // c1 unpinned in node.
+	it.RequireIpfsPinnedCid(ctx, t, c2, ipfs)   // c2 pinned in node.
+
+	okPinned, err := ci.IsPinned(ctx, iid, c1)
+	require.NoError(t, err)
+	require.False(t, okPinned) // API claims c1 is unpinned.
+	okPinned, err = ci.IsPinned(ctx, iid, c2)
+	require.NoError(t, err)
+	require.True(t, okPinned) // API claims c2 is unpinned.
+
+	requireRefCount(t, ci, c1, 0, 0) // c1 ref count all 0.
+	requireRefCount(t, ci, c2, 1, 0) // c2 from staged to strong.
+}
+
+func TestReplaceNotUnpinAndPin(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := rand.New(rand.NewSource(22))
+
+	ci, ipfs := newCoreIPFS(t)
+
+	// Pin c1
+	iid1 := ffs.NewAPIID()
+	data := it.RandomBytes(r, 1500)
+	c1, err := ci.Stage(ctx, iid1, bytes.NewReader(data))
+	require.NoError(t, err)
+	_, err = ci.Pin(ctx, iid1, c1)
+	require.NoError(t, err)
+	requireRefCount(t, ci, c1, 1, 0)
+
+	// Make another iid pin c1, so can't be unpinned by replace.
+	iid2 := ffs.NewAPIID()
+	_, err = ci.Pin(ctx, iid2, c1)
+	require.NoError(t, err)
+	requireRefCount(t, ci, c1, 2, 0)
+
+	// Stage data2
+	data2 := it.RandomBytes(r, 1500)
+	c2, err := ci.Stage(ctx, iid1, bytes.NewReader(data2))
+	require.NoError(t, err)
+	requireRefCount(t, ci, c2, 0, 1)
+
+	// Replace
+	size, err := ci.Replace(ctx, iid1, c1, c2)
+	require.NoError(t, err)
+	require.Greater(t, size, 0)
+
+	// Post checks
+	it.RequireIpfsPinnedCid(ctx, t, c1, ipfs) // c1 still pinned in node, since used by iid2.
+	it.RequireIpfsPinnedCid(ctx, t, c2, ipfs) // c2 pinned in node.
+
+	okPinned, err := ci.IsPinned(ctx, iid1, c1)
+	require.NoError(t, err)
+	require.False(t, okPinned) // API claims c1 unpinned in iid1.
+	okPinned, err = ci.IsPinned(ctx, iid2, c1)
+	require.NoError(t, err)
+	require.True(t, okPinned) // API claims c1 pinned in iid2.
+	okPinned, err = ci.IsPinned(ctx, iid1, c2)
+	require.NoError(t, err)
+	require.True(t, okPinned) // API claims c2 pinned in iid1.
+
+	requireRefCount(t, ci, c1, 1, 0) // from (2, 0) to (1, 0), only iid2.
+	requireRefCount(t, ci, c2, 1, 0) // c2 strong pin by replace.
+}
+
+func TestReplaceErrors(t *testing.T) {
+}
+
+// Test pinning a Cid, unpinning it, and Stage it again.
+func TestPinUnpinStage(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := rand.New(rand.NewSource(22))
+
+	ci, ipfs := newCoreIPFS(t)
+	data := it.RandomBytes(r, 1500)
+	iid := ffs.NewAPIID()
+
+	rd := ipfsfiles.NewReaderFile(bytes.NewReader(data))
+	p, err := ipfs.Unixfs().Add(ctx, rd, options.Unixfs.Pin(false))
+	require.NoError(t, err)
+	c := p.Cid()
+
+	_, err = ci.Pin(ctx, iid, c)
+	require.NoError(t, err)
+	err = ci.Unpin(ctx, iid, c)
+	require.NoError(t, err)
+	requireRefCount(t, ci, c, 0, 0)
+
+	// Stage it again and check invariants:
+	// must be gcable, is pinned, and should have a staged-pin.
+	c, err = ci.Stage(ctx, iid, bytes.NewReader(data))
+	require.NoError(t, err)
+	it.RequireIpfsPinnedCid(ctx, t, c, ipfs)
+	requireCidIsGCable(t, ci, c)
+	okPinned, err := ci.IsPinned(ctx, iid, c)
+	require.NoError(t, err)
+	require.True(t, okPinned)
+	requireRefCount(t, ci, c, 0, 1)
+}
+
+func TestMultipleStage(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := rand.New(rand.NewSource(22))
+
+	ci, ipfs := newCoreIPFS(t)
 	data := it.RandomBytes(r, 1500)
 
-	// # Stage
-	c, err := coreipfs.Stage(ctx, bytes.NewReader(data))
+	// Stage with iid1.
+	iid1 := ffs.NewAPIID()
+	c, err := ci.Stage(ctx, iid1, bytes.NewReader(data))
 	require.NoError(t, err)
-	// Check that staged data is pinned.
 	it.RequireIpfsPinnedCid(ctx, t, c, ipfs)
-	// Check that staged data is GCable
-	requireCidIsGCable(t, coreipfs, c)
-	okPinned, err := coreipfs.IsPinned(ctx, c)
+	requireCidIsGCable(t, ci, c)
+	okPinned, err := ci.IsPinned(ctx, iid1, c)
 	require.NoError(t, err)
 	require.True(t, okPinned)
+	requireRefCount(t, ci, c, 0, 1)
 
-	// # Pin
-	_, err = coreipfs.Pin(ctx, c)
+	// Stage with iid1.
+	iid2 := ffs.NewAPIID()
+	c, err = ci.Stage(ctx, iid2, bytes.NewReader(data))
 	require.NoError(t, err)
-	// Check is still pinned.
 	it.RequireIpfsPinnedCid(ctx, t, c, ipfs)
-	// Check that now can't be GCed.
-	requireCidIsNotGCable(t, coreipfs, c)
-	okPinned, err = coreipfs.IsPinned(ctx, c)
+	requireCidIsGCable(t, ci, c)
+	okPinned, err = ci.IsPinned(ctx, iid2, c)
 	require.NoError(t, err)
 	require.True(t, okPinned)
+	requireRefCount(t, ci, c, 0, 2)
 
-	// # Unpin
-	err = coreipfs.Unpin(ctx, c)
+	// Stage with iid3.
+	iid3 := ffs.NewAPIID()
+	c, err = ci.Stage(ctx, iid3, bytes.NewReader(data))
 	require.NoError(t, err)
-	it.RequireIpfsUnpinnedCid(ctx, t, c, ipfs)
-	okPinned, err = coreipfs.IsPinned(ctx, c)
+	it.RequireIpfsPinnedCid(ctx, t, c, ipfs)
+	requireCidIsGCable(t, ci, c)
+	okPinned, err = ci.IsPinned(ctx, iid3, c)
 	require.NoError(t, err)
-	require.False(t, okPinned)
+	require.True(t, okPinned)
+	requireRefCount(t, ci, c, 0, 3)
+}
+
+func TestTwoStageOnePin(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := rand.New(rand.NewSource(22))
+
+	ci, _ := newCoreIPFS(t)
+	data := it.RandomBytes(r, 1500)
+
+	// Stage with iid1
+	iid1 := ffs.NewAPIID()
+	c, err := ci.Stage(ctx, iid1, bytes.NewReader(data))
+	require.NoError(t, err)
+
+	// Stage with other iid.
+	iid2 := ffs.NewAPIID()
+	c, err = ci.Stage(ctx, iid2, bytes.NewReader(data))
+	require.NoError(t, err)
+
+	requireCidIsGCable(t, ci, c) // Can be GCable
+
+	// Pin with iid1
+	_, err = ci.Pin(ctx, iid1, c)
+	require.NoError(t, err)
+	requireCidIsNotGCable(t, ci, c) // Can't be GCable
+	requireRefCount(t, ci, c, 1, 1) // One strong and one staged.
+
+	// Now unpin and check.
+	err = ci.Unpin(ctx, iid1, c)
+	require.NoError(t, err)
+	requireCidIsGCable(t, ci, c)    // Now is GCable again.
+	requireRefCount(t, ci, c, 0, 1) // Only iid2 staged.
 }
 
 func TestGC(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
+	iid := ffs.NewAPIID()
 
 	t.Run("Simple", func(t *testing.T) {
-		coreipfs, ipfs := newCoreIPFS(t)
+		ci, ipfs := newCoreIPFS(t)
 		// # Stage 1
 		r := rand.New(rand.NewSource(22))
 		data := it.RandomBytes(r, 1500)
-		c1, err := coreipfs.Stage(ctx, bytes.NewReader(data))
+		c1, err := ci.Stage(ctx, iid, bytes.NewReader(data))
 		require.NoError(t, err)
 
 		// # Stage 1
 		data = it.RandomBytes(r, 1500)
-		c2, err := coreipfs.Stage(ctx, bytes.NewReader(data))
+		c2, err := ci.Stage(ctx, iid, bytes.NewReader(data))
 		require.NoError(t, err)
 
-		gced, err := coreipfs.GCStaged(ctx, nil, time.Now())
+		gced, err := ci.GCStaged(ctx, nil, time.Now())
 		require.NoError(t, err)
 		require.Len(t, gced, 2)
 
 		it.RequireIpfsUnpinnedCid(ctx, t, c1, ipfs)
 		it.RequireIpfsUnpinnedCid(ctx, t, c2, ipfs)
 
-		gced, err = coreipfs.GCStaged(ctx, nil, time.Now())
+		gced, err = ci.GCStaged(ctx, nil, time.Now())
 		require.NoError(t, err)
 		require.Len(t, gced, 0)
 	})
 
 	t.Run("Exclusion", func(t *testing.T) {
-		coreipfs, ipfs := newCoreIPFS(t)
+		ci, ipfs := newCoreIPFS(t)
 		// # Stage 1
 		r := rand.New(rand.NewSource(22))
 		data := it.RandomBytes(r, 1500)
-		c1, err := coreipfs.Stage(ctx, bytes.NewReader(data))
+		c1, err := ci.Stage(ctx, iid, bytes.NewReader(data))
 		require.NoError(t, err)
 
 		// # Stage 1
 		data = it.RandomBytes(r, 1500)
-		c2, err := coreipfs.Stage(ctx, bytes.NewReader(data))
+		c2, err := ci.Stage(ctx, iid, bytes.NewReader(data))
 		require.NoError(t, err)
 
-		gced, err := coreipfs.GCStaged(ctx, []cid.Cid{c1}, time.Now())
+		gced, err := ci.GCStaged(ctx, []cid.Cid{c1}, time.Now())
 		require.NoError(t, err)
 		require.Len(t, gced, 1)
 
 		it.RequireIpfsUnpinnedCid(ctx, t, c2, ipfs)
 
-		gced, err = coreipfs.GCStaged(ctx, nil, time.Now())
+		gced, err = ci.GCStaged(ctx, nil, time.Now())
 		require.NoError(t, err)
 		require.Len(t, gced, 1)
 		it.RequireIpfsUnpinnedCid(ctx, t, c1, ipfs)
 	})
 
 	t.Run("Very old", func(t *testing.T) {
-		coreipfs, ipfs := newCoreIPFS(t)
+		ci, ipfs := newCoreIPFS(t)
 		// # Stage 1
 		r := rand.New(rand.NewSource(22))
 		data := it.RandomBytes(r, 1500)
-		c1, err := coreipfs.Stage(ctx, bytes.NewReader(data))
+		c1, err := ci.Stage(ctx, iid, bytes.NewReader(data))
 		require.NoError(t, err)
 
 		// # Stage 1
 		data = it.RandomBytes(r, 1500)
-		c2, err := coreipfs.Stage(ctx, bytes.NewReader(data))
+		c2, err := ci.Stage(ctx, iid, bytes.NewReader(data))
 		require.NoError(t, err)
 
-		gced, err := coreipfs.GCStaged(ctx, nil, time.Now().Add(-time.Hour))
+		gced, err := ci.GCStaged(ctx, nil, time.Now().Add(-time.Hour))
 		require.NoError(t, err)
 		require.Len(t, gced, 0)
 
-		gced, err = coreipfs.GCStaged(ctx, nil, time.Now())
+		gced, err = ci.GCStaged(ctx, nil, time.Now())
 		require.NoError(t, err)
 		require.Len(t, gced, 2)
 
@@ -150,6 +436,14 @@ func requireCidIsGCable(t *testing.T, ci *CoreIpfs, c cid.Cid) bool {
 
 func requireCidIsNotGCable(t *testing.T, ci *CoreIpfs, c cid.Cid) bool {
 	return !requireCidIsGCable(t, ci, c)
+}
+
+func requireRefCount(t *testing.T, ci *CoreIpfs, c cid.Cid, reqStrong, reqStaged int) {
+	total, staged := ci.ps.RefCount(c)
+	strong := total - staged
+
+	require.Equal(t, strong, reqStrong)
+	require.Equal(t, staged, reqStaged)
 }
 
 func newCoreIPFS(t *testing.T) (*CoreIpfs, *httpapi.HttpApi) {

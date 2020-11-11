@@ -2,6 +2,7 @@ package coreipfs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -21,6 +22,9 @@ import (
 
 var (
 	log = logging.Logger("ffs-coreipfs")
+
+	ErrUnpinnedCid          = errors.New("can't unpin an unpinned cid")
+	ErrReplaceFromNotPinned = errors.New("c1 isn't pinned")
 )
 
 // CoreIpfs is an implementation of HotStorage interface which saves data
@@ -29,6 +33,7 @@ type CoreIpfs struct {
 	ipfs iface.CoreAPI
 	ps   *pinstore.Store
 
+	// TODO: check usage.
 	lock sync.Mutex
 }
 
@@ -47,31 +52,12 @@ func New(ds datastore.TxnDatastore, ipfs iface.CoreAPI, l ffs.JobLogger) (*CoreI
 	return ci, nil
 }
 
-// Unpin unpins a Cid for an APIID.
-func (ci *CoreIpfs) Unpin(ctx context.Context, iid ffs.APIID, c cid.Cid) error {
-	return ci.unpin(ctx, iid, c)
-}
-
-func (ci *CoreIpfs) IsPinned(ctx context.Context, iid ffs.APIID, c cid.Cid) (bool, error) {
-	return ci.ps.IsPinned(iid, c), nil
-}
-
-// Stage creates a stage-pin for a data stream for an APIID. This pin can be considered unpinnable
+// Stage creates a staged-pin for a data stream for an APIID. This pin can be considered unpinnable
 // automatically by GCStaged().
 func (ci *CoreIpfs) Stage(ctx context.Context, iid ffs.APIID, r io.Reader) (cid.Cid, error) {
 	p, err := ci.ipfs.Unixfs().Add(ctx, ipfsfiles.NewReaderFile(r), options.Unixfs.Pin(true))
 	if err != nil {
 		return cid.Undef, fmt.Errorf("adding data to ipfs: %s", err)
-	}
-
-	// APIID already pinned this Cid,  no ref count to update here.
-	// May happen if the user is staging mutiple times
-	// the same data for no reason, or staging the data
-	// again after it was already pinned by Hot Storage.
-	// In any case, the ref count is already counted for
-	// this APIID, nothing to do.
-	if ci.ps.IsPinned(iid, p.Cid()) {
-		return p.Cid(), nil
 	}
 
 	if err := ci.ps.AddStaged(iid, p.Cid()); err != nil {
@@ -101,7 +87,7 @@ func (ci *CoreIpfs) Pin(ctx context.Context, iid ffs.APIID, c cid.Cid) (int, err
 
 	// If some APIID already pinned this Cid in the underlying go-ipfs node, then
 	// we don't need to call the Pin API, just count the reference from this APIID.
-	if !ci.ps.IsPinnedInNode(c) {
+	if !ci.ps.IsPinned(c) {
 		if err := ci.ipfs.Pin().Add(ctx, p, options.Pin.Recursive(true)); err != nil {
 			return 0, fmt.Errorf("pinning cid %s: %s", c, err)
 		}
@@ -119,6 +105,11 @@ func (ci *CoreIpfs) Pin(ctx context.Context, iid ffs.APIID, c cid.Cid) (int, err
 	return s.CumulativeSize, nil
 }
 
+// Unpin unpins a Cid for an APIID. If the Cid isn't pinned, it returns ErrUnpinnedCid
+func (ci *CoreIpfs) Unpin(ctx context.Context, iid ffs.APIID, c cid.Cid) error {
+	return ci.unpin(ctx, iid, c)
+}
+
 // Replace moves the pin from c1 to c2. If c2 was already pinned from a stage,
 // it's considered fully-pinned.
 func (ci *CoreIpfs) Replace(ctx context.Context, iid ffs.APIID, c1 cid.Cid, c2 cid.Cid) (int, error) {
@@ -129,7 +120,7 @@ func (ci *CoreIpfs) Replace(ctx context.Context, iid ffs.APIID, c1 cid.Cid, c2 c
 	c2refcount, _ := ci.ps.RefCount(c2)
 
 	if c1refcount == 0 {
-		return 0, fmt.Errorf("c1 pin from replace isn't pinned")
+		return 0, ErrReplaceFromNotPinned
 	}
 
 	// If c1 has a single reference, which must be from iid, and c2 isn't pinned
@@ -149,15 +140,8 @@ func (ci *CoreIpfs) Replace(ctx context.Context, iid ffs.APIID, c1 cid.Cid, c2 c
 		// - c1 is pinned by another iid, so we can't unpin it.
 		// - c2 is pinned by some other iid, so it's already pinned in the node, no need to do it.
 	}
-
 	// In any case of above if, update the ref counts.
 
-	stat, err := ci.ipfs.Object().Stat(ctx, p2)
-	if err != nil {
-		return 0, fmt.Errorf("getting stats of cid %s: %s", c2, err)
-	}
-
-	// Decrease for iid refcount by one to c1, and increase by one to c2.
 	if err := ci.ps.Remove(iid, c1); err != nil {
 		return 0, fmt.Errorf("removing cid in pinstore: %s", err)
 	}
@@ -165,7 +149,16 @@ func (ci *CoreIpfs) Replace(ctx context.Context, iid ffs.APIID, c1 cid.Cid, c2 c
 		return 0, fmt.Errorf("adding cid in pinstore: %s", err)
 	}
 
+	stat, err := ci.ipfs.Object().Stat(ctx, p2)
+	if err != nil {
+		return 0, fmt.Errorf("getting stats of cid %s: %s", c2, err)
+	}
+
 	return stat.CumulativeSize, nil
+}
+
+func (ci *CoreIpfs) IsPinned(ctx context.Context, iid ffs.APIID, c cid.Cid) (bool, error) {
+	return ci.ps.IsPinnedBy(iid, c), nil
 }
 
 // GCStaged unpins Cids that are only pinned by Stage() calls and all pins satisfy the filters.
@@ -224,7 +217,7 @@ Loop:
 func (ci *CoreIpfs) unpin(ctx context.Context, iid ffs.APIID, c cid.Cid) error {
 	count, _ := ci.ps.RefCount(c)
 	if count == 0 {
-		return fmt.Errorf("cid %s for %s isn't pinned", c, iid)
+		return ErrUnpinnedCid
 	}
 
 	if count == 1 {

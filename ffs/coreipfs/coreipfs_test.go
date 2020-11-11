@@ -344,6 +344,7 @@ func TestTwoStageOnePin(t *testing.T) {
 	iid1 := ffs.NewAPIID()
 	c, err := ci.Stage(ctx, iid1, bytes.NewReader(data))
 	require.NoError(t, err)
+	require.True(t, c.Defined())
 
 	// Stage with other iid.
 	iid2 := ffs.NewAPIID()
@@ -444,23 +445,24 @@ func TestGCSingleAPIID(t *testing.T) {
 		it.RequireIpfsUnpinnedCid(ctx, t, c1, ipfs)
 		it.RequireIpfsUnpinnedCid(ctx, t, c2, ipfs)
 	})
-
 }
 
-func requireCidIsGCable(t *testing.T, ci *CoreIpfs, c cid.Cid) bool {
-	lst, err := ci.getGCCandidates(context.Background(), nil, time.Now())
+func requireCidIsGCable(t *testing.T, ci *CoreIpfs, c cid.Cid) {
+	lst, err := ci.getGCCandidates(nil, time.Now())
 	require.NoError(t, err)
 
+	var isGCable bool
 	for _, cid := range lst {
 		if cid.Equals(c) {
-			return true
+			isGCable = true
+			break
 		}
 	}
-	return false
+	require.True(t, isGCable)
 }
 
-func requireCidIsNotGCable(t *testing.T, ci *CoreIpfs, c cid.Cid) bool {
-	return !requireCidIsGCable(t, ci, c)
+func requireCidIsNotGCable(t *testing.T, ci *CoreIpfs, c cid.Cid) {
+	requireCidIsGCable(t, ci, c)
 }
 
 func requireRefCount(t *testing.T, ci *CoreIpfs, c cid.Cid, reqStrong, reqStaged int) {
@@ -479,5 +481,4 @@ func newCoreIPFS(t *testing.T) (*CoreIpfs, *httpapi.HttpApi) {
 	require.NoError(t, err)
 
 	return hl, ipfs
-
 }

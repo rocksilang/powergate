@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// GCStaged runs a unpinning garbage collection and returns the unpinned cids.
 func (a *Service) GCStaged(ctx context.Context, req *adminProto.GCStagedRequest) (*adminProto.GCStagedResponse, error) {
 	cids, err := a.s.GCStaged(ctx)
 	if err != nil {

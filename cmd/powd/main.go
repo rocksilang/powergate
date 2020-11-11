@@ -268,6 +268,7 @@ func setupLogging(repoPath string) error {
 		"ffs-sched-sjstore",
 		"ffs-sched-rjstore",
 		"ffs-cidlogger",
+		"ffs-pinstore",
 
 		// gRPC Services
 		"powergate-service",

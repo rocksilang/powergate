@@ -35,6 +35,7 @@ require (
 	github.com/libp2p/go-libp2p v0.12.0
 	github.com/libp2p/go-libp2p-core v0.7.0
 	github.com/libp2p/go-libp2p-kad-dht v0.11.0
+	github.com/json-iterator/go v1.1.10 // indirect
 	github.com/logrusorgru/aurora v0.0.0-20200102142835-e9ef32dff381
 	github.com/mattn/go-runewidth v0.0.8 // indirect
 	github.com/mitchellh/go-homedir v1.1.0

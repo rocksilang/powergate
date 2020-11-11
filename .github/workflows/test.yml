@@ -2,7 +2,7 @@ name: Tests
 on:
   push:
     branches:
-      - jsign/sfgc2
+      - jsign/sfgc3
   pull_request:
     branches:
       - master

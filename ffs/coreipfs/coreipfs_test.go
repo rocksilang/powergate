@@ -152,7 +152,7 @@ func TestReplaceThatUnpinAndPin(t *testing.T) {
 	require.NoError(t, err)
 	requireRefCount(t, ci, c1, 1, 0)
 
-	// Stage data2
+	// Stage c2
 	data2 := it.RandomBytes(r, 1500)
 	c2, err := ci.Stage(ctx, iid, bytes.NewReader(data2))
 	require.NoError(t, err)
@@ -230,6 +230,31 @@ func TestReplaceNotUnpinAndPin(t *testing.T) {
 }
 
 func TestReplaceErrors(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := rand.New(rand.NewSource(22))
+
+	ci, ipfs := newCoreIPFS(t)
+	iid := ffs.NewAPIID()
+
+	// Add directly to IPFS node without pinning
+	data := it.RandomBytes(r, 1500)
+	rd := ipfsfiles.NewReaderFile(bytes.NewReader(data))
+	p, err := ipfs.Unixfs().Add(ctx, rd, options.Unixfs.Pin(false))
+	require.NoError(t, err)
+	c1 := p.Cid()
+
+	// Stage c2
+	data2 := it.RandomBytes(r, 1500)
+	c2, err := ci.Stage(ctx, iid, bytes.NewReader(data2))
+	require.NoError(t, err)
+	requireRefCount(t, ci, c2, 0, 1)
+
+	// Replace
+	_, err = ci.Replace(ctx, iid, c1, c2)
+	require.Equal(t, ErrReplaceFromNotPinned, err)
+	requireRefCount(t, ci, c1, 0, 0)
+	requireRefCount(t, ci, c2, 0, 1)
 }
 
 // Test pinning a Cid, unpinning it, and Stage it again.
@@ -340,7 +365,7 @@ func TestTwoStageOnePin(t *testing.T) {
 	requireRefCount(t, ci, c, 0, 1) // Only iid2 staged.
 }
 
-func TestGC(t *testing.T) {
+func TestGCSingleAPIID(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	iid := ffs.NewAPIID()

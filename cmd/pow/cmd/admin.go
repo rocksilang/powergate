@@ -40,3 +40,9 @@ var adminWalletCmd = &cobra.Command{
 	Short: "Provides admin wallet commands",
 	Long:  `Provides admin wallet commands`,
 }
+
+var adminDataCmd = &cobra.Command{
+	Use:   "data",
+	Short: "Provides admin data commands",
+	Long:  `Provides admin data commands`,
+}

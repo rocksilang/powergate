@@ -213,7 +213,7 @@ func (s *Store) RemoveStaged(c cid.Cid) error {
 	if err := s.ds.Delete(makeKey(c)); err != nil {
 		return fmt.Errorf("deleting from datastore: %s", err)
 	}
-	s.cache[c] = pc1
+	delete(s.cache, c)
 
 	return nil
 }
@@ -238,11 +238,21 @@ Loop:
 
 // persist persists a PinnedCid in the datastore.
 func (s *Store) persist(r PinnedCid) error {
+	k := makeKey(r.Cid)
+
+	if len(r.Pins) == 0 {
+		if err := s.ds.Delete(k); err != nil {
+			return fmt.Errorf("delete from datastore: %s", err)
+		}
+		delete(s.cache, r.Cid)
+
+		return nil
+	}
 	buf, err := json.Marshal(r)
 	if err != nil {
 		return fmt.Errorf("marshaling to datastore: %s", err)
 	}
-	if err := s.ds.Put(makeKey(r.Cid), buf); err != nil {
+	if err := s.ds.Put(k, buf); err != nil {
 		return fmt.Errorf("put in datastore: %s", err)
 	}
 	s.cache[r.Cid] = r

@@ -448,24 +448,29 @@ func TestGCSingleAPIID(t *testing.T) {
 }
 
 func requireCidIsGCable(t *testing.T, ci *CoreIpfs, c cid.Cid) {
-	lst, err := ci.getGCCandidates(nil, time.Now())
-	require.NoError(t, err)
-
-	var isGCable bool
-	for _, cid := range lst {
-		if cid.Equals(c) {
-			isGCable = true
-			break
-		}
-	}
-	require.True(t, isGCable)
+	t.Helper()
+	require.True(t, isGCable(t, ci, c))
 }
 
 func requireCidIsNotGCable(t *testing.T, ci *CoreIpfs, c cid.Cid) {
-	requireCidIsGCable(t, ci, c)
+	t.Helper()
+	require.False(t, isGCable(t, ci, c))
+}
+
+func isGCable(t *testing.T, ci *CoreIpfs, c cid.Cid) bool {
+	lst, err := ci.getGCCandidates(nil, time.Now())
+	require.NoError(t, err)
+
+	for _, cid := range lst {
+		if cid.Equals(c) {
+			return true
+		}
+	}
+	return false
 }
 
 func requireRefCount(t *testing.T, ci *CoreIpfs, c cid.Cid, reqStrong, reqStaged int) {
+	t.Helper()
 	total, staged := ci.ps.RefCount(c)
 	strong := total - staged
 

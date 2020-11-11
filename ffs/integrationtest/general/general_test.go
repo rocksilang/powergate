@@ -318,7 +318,7 @@ func TestHotStorageFalseWithAlreadyPinnedData(t *testing.T) {
 
 		cid, _ := it.AddRandomFileSize(t, r, ipfs, 1600)
 		// Simulate staging the data, which pins it.
-		_, err = hs.Pin(ctx, cid)
+		_, err = hs.Pin(ctx, fapi.ID(), cid)
 		require.NoError(t, err)
 
 		config := fapi.DefaultStorageConfig().WithHotEnabled(false)

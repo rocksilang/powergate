@@ -52,6 +52,10 @@ func (ci *CoreIpfs) Unpin(ctx context.Context, iid ffs.APIID, c cid.Cid) error {
 	return ci.unpin(ctx, iid, c)
 }
 
+func (ci *CoreIpfs) IsPinned(ctx context.Context, iid ffs.APIID, c cid.Cid) (bool, error) {
+	return ci.ps.IsPinned(iid, c), nil
+}
+
 // Stage creates a stage-pin for a data stream for an APIID. This pin can be considered unpinnable
 // automatically by GCStaged().
 func (ci *CoreIpfs) Stage(ctx context.Context, iid ffs.APIID, r io.Reader) (cid.Cid, error) {
@@ -154,8 +158,11 @@ func (ci *CoreIpfs) Replace(ctx context.Context, iid ffs.APIID, c1 cid.Cid, c2 c
 	}
 
 	// Decrease for iid refcount by one to c1, and increase by one to c2.
-	if err := ci.ps.Swap(iid, c1, c2); err != nil {
-		return 0, fmt.Errorf("replace cids in pinstore: %s", err)
+	if err := ci.ps.Remove(iid, c1); err != nil {
+		return 0, fmt.Errorf("removing cid in pinstore: %s", err)
+	}
+	if err := ci.ps.Add(iid, c2); err != nil {
+		return 0, fmt.Errorf("adding cid in pinstore: %s", err)
 	}
 
 	return stat.CumulativeSize, nil
@@ -241,7 +248,7 @@ func (ci *CoreIpfs) unpinStaged(ctx context.Context, c cid.Cid) error {
 	// Just in case, verify that the total number of pins are equal
 	// to stage-pins. That is, nobody is pinning this Cid apart from Stage() calls.
 	if count != stagedCount {
-		return fmt.Errorf("cid %s hasn't only stage-pins, total %d staged %d", count, stagedCount)
+		return fmt.Errorf("cid %s hasn't only stage-pins, total %d staged %d", c, count, stagedCount)
 	}
 
 	if err := ci.ipfs.Pin().Rm(ctx, path.IpfsPath(c), options.Pin.RmRecursive(true)); err != nil {

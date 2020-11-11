@@ -81,7 +81,7 @@ func TestResumeScheduler(t *testing.T) {
 	t.Parallel()
 
 	ds := tests.NewTxMapDatastore()
-	ipfs, ipfsMAddr := itmanager.CreateIPFS(t)
+	ipfs, ipfsMAddr := it.CreateIPFS(t)
 	addr, client, ms := itmanager.NewDevnet(t, 1, ipfsMAddr)
 	manager, closeManager := itmanager.NewFFSManager(t, ds, client, addr, ms, ipfs)
 	auth, err := manager.Create(context.Background())

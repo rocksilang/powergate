@@ -203,7 +203,7 @@ func (s *Scheduler) StorageConfig(jid ffs.JobID) (ffs.StorageConfig, error) {
 // should be considered failed. If error is nil, it still can return []ffs.DealError
 // since some deals failing isn't necessarily a fatal Job config execution.
 func (s *Scheduler) executeStorage(ctx context.Context, a astore.StorageAction, job ffs.StorageJob, dealUpdates chan deals.StorageDealInfo) (ffs.StorageInfo, []ffs.DealError, error) {
-	ci, err := s.getRefreshedInfo(ctx, a.Cid)
+	ci, err := s.getRefreshedInfo(ctx, a.APIID, a.Cid)
 	if err != nil {
 		return ffs.StorageInfo{}, nil, fmt.Errorf("getting current cid info from store: %s", err)
 	}
@@ -270,7 +270,7 @@ func (s *Scheduler) executeDisabledHotStorage(ctx context.Context, iid ffs.APIID
 }
 
 // executeEnabledHotStorageEnabled runs the logic if the Job has Hot Storage enabled.
-func (s *Scheduler) executeEnabledHotStorage(ctx context.Context, iid ffs.APIID, curr ffs.CidInfo, cfg ffs.HotConfig, waddr string, replaceCid cid.Cid) (ffs.HotInfo, error) {
+func (s *Scheduler) executeEnabledHotStorage(ctx context.Context, iid ffs.APIID, curr ffs.StorageInfo, cfg ffs.HotConfig, waddr string, replaceCid cid.Cid) (ffs.HotInfo, error) {
 	if curr.Hot.Enabled {
 		s.l.Log(ctx, "No actions needed in enabling Hot Storage.")
 		return curr.Hot, nil

@@ -65,7 +65,7 @@ func TestPushCidReplace(t *testing.T) {
 func TestDoubleReplace(t *testing.T) {
 	t.Parallel()
 	ds := tests.NewTxMapDatastore()
-	ipfs, ipfsMAddr := itmanager.CreateIPFS(t)
+	ipfs, ipfsMAddr := it.CreateIPFS(t)
 	addr, client, ms := itmanager.NewDevnet(t, 1, ipfsMAddr)
 	m, closeManager := itmanager.NewFFSManager(t, ds, client, addr, ms, ipfs)
 	defer closeManager()

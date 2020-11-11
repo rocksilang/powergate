@@ -25,6 +25,7 @@ import (
 
 	httpapi "github.com/ipfs/go-ipfs-http-client"
 	dealsModule "github.com/textileio/powergate/deals/module"
+	it "github.com/textileio/powergate/ffs/integrationtest"
 	txndstr "github.com/textileio/powergate/txndstransform"
 	walletModule "github.com/textileio/powergate/wallet/module"
 )
@@ -36,7 +37,7 @@ const (
 // NewAPI returns a new set of components for FFS.
 func NewAPI(t tests.TestingTWithCleanup, numMiners int) (*httpapi.HttpApi, *apistruct.FullNodeStruct, *api.API, func()) {
 	ds := tests.NewTxMapDatastore()
-	ipfs, ipfsMAddr := CreateIPFS(t)
+	ipfs, ipfsMAddr := it.CreateIPFS(t)
 	addr, clientBuilder, ms := NewDevnet(t, numMiners, ipfsMAddr)
 	manager, closeManager := NewFFSManager(t, ds, clientBuilder, addr, ms, ipfs)
 	auth, err := manager.Create(context.Background())
@@ -52,19 +53,6 @@ func NewAPI(t tests.TestingTWithCleanup, numMiners int) (*httpapi.HttpApi, *apis
 		closeManager()
 		cls()
 	}
-}
-
-// CreateIPFS creates a docker container running IPFS.
-func CreateIPFS(t tests.TestingTWithCleanup) (*httpapi.HttpApi, string) {
-	ipfsDocker, cls := tests.LaunchIPFSDocker(t)
-	t.Cleanup(cls)
-	ipfsAddr := util.MustParseAddr("/ip4/127.0.0.1/tcp/" + ipfsDocker.GetPort("5001/tcp"))
-	ipfs, err := httpapi.NewApi(ipfsAddr)
-	require.NoError(t, err)
-	bridgeIP := ipfsDocker.Container.NetworkSettings.Networks["bridge"].IPAddress
-	ipfsDockerMAddr := fmt.Sprintf("/ip4/%s/tcp/5001", bridgeIP)
-
-	return ipfs, ipfsDockerMAddr
 }
 
 // NewDevnet creates a localnet.

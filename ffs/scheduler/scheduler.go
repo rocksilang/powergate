@@ -464,6 +464,7 @@ func (s *Scheduler) executeQueuedStorage(j ffs.StorageJob) {
 	if err := s.sjs.Finalize(j.ID, finalStatus, nil, dealErrors); err != nil {
 		log.Errorf("changing job to success: %s", err)
 	}
+
 	s.l.Log(ctx, "Job %s execution finished with status %s.", j.ID, ffs.JobStatusStr[finalStatus])
 }
 

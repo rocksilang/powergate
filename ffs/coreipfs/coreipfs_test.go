@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/textileio/powergate/ffs"
 	it "github.com/textileio/powergate/ffs/integrationtest"
+	itmanager "github.com/textileio/powergate/ffs/integrationtest/manager"
 	"github.com/textileio/powergate/ffs/joblogger"
 	"github.com/textileio/powergate/tests"
 	txndstr "github.com/textileio/powergate/txndstransform"
@@ -448,7 +449,7 @@ func requireRefCount(t *testing.T, ci *CoreIpfs, c cid.Cid, reqStrong, reqStaged
 
 func newCoreIPFS(t *testing.T) (*CoreIpfs, *httpapi.HttpApi) {
 	ds := tests.NewTxMapDatastore()
-	ipfs, _ := it.CreateIPFS(t)
+	ipfs, _ := itmanager.CreateIPFS(t)
 	l := joblogger.New(txndstr.Wrap(ds, "ffs/joblogger"))
 	hl, err := New(ds, ipfs, l)
 	require.NoError(t, err)

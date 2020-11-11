@@ -3,7 +3,6 @@ package integrationtest
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math/rand"
 	"time"
 
@@ -16,8 +15,6 @@ import (
 	"github.com/textileio/powergate/deals"
 	"github.com/textileio/powergate/ffs"
 	"github.com/textileio/powergate/ffs/api"
-	"github.com/textileio/powergate/tests"
-	"github.com/textileio/powergate/util"
 )
 
 // RequireIpfsUnpinnedCid checks that a cid is unpinned in the IPFS node.
@@ -56,19 +53,6 @@ func RequireFilStored(ctx context.Context, t require.TestingT, client *apistruct
 	offers, err := client.ClientFindData(ctx, c, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, offers)
-}
-
-// CreateIPFS creates a docker container running IPFS.
-func CreateIPFS(t tests.TestingTWithCleanup) (*httpapi.HttpApi, string) {
-	ipfsDocker, cls := tests.LaunchIPFSDocker(t)
-	t.Cleanup(cls)
-	ipfsAddr := util.MustParseAddr("/ip4/127.0.0.1/tcp/" + ipfsDocker.GetPort("5001/tcp"))
-	ipfs, err := httpapi.NewApi(ipfsAddr)
-	require.NoError(t, err)
-	bridgeIP := ipfsDocker.Container.NetworkSettings.Networks["bridge"].IPAddress
-	ipfsDockerMAddr := fmt.Sprintf("/ip4/%s/tcp/5001", bridgeIP)
-
-	return ipfs, ipfsDockerMAddr
 }
 
 // RequireStorageJobState checks if the current status of a job matches one of the specified statuses.

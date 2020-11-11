@@ -64,11 +64,7 @@ func TestNewAddressDefault(t *testing.T) {
 func TestSendFil(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-<<<<<<< HEAD
-	_, api, fapi, cls := it.NewAPI(t, 1)
-=======
-	_, _, fapi, cls := itmanager.NewAPI(t, 1)
->>>>>>> 52e5666... reset to master
+	_, api, fapi, cls := itmanager.NewAPI(t, 1)
 	defer cls()
 
 	const amt int64 = 1

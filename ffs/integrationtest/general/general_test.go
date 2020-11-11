@@ -94,7 +94,6 @@ func TestGet(t *testing.T) {
 
 func TestDealConsistency(t *testing.T) {
 	tests.RunFlaky(t, func(t *tests.FlakyT) {
-		ctx := context.Background()
 		ipfs, _, fapi, cls := itmanager.NewAPI(t, 1)
 		defer cls()
 
@@ -170,7 +169,6 @@ func TestShow(t *testing.T) {
 	t.Parallel()
 
 	tests.RunFlaky(t, func(t *tests.FlakyT) {
-		ctx := context.Background()
 		ipfs, _, fapi, cls := itmanager.NewAPI(t, 1)
 
 		defer cls()
@@ -223,7 +221,7 @@ func TestColdInstanceLoad(t *testing.T) {
 		ctx := context.Background()
 
 		ds := tests.NewTxMapDatastore()
-		ipfs, ipfsMAddr := it.CreateIPFS(t)
+		ipfs, ipfsMAddr := itmanager.CreateIPFS(t)
 		addr, client, ms := itmanager.NewDevnet(t, 1, ipfsMAddr)
 		manager, closeManager := itmanager.NewFFSManager(t, ds, client, addr, ms, ipfs)
 
@@ -275,7 +273,7 @@ func TestHighMinimumPieceSize(t *testing.T) {
 	t.Parallel()
 	tests.RunFlaky(t, func(t *tests.FlakyT) {
 		ds := tests.NewTxMapDatastore()
-		ipfs, ipfsMAddr := it.CreateIPFS(t)
+		ipfs, ipfsMAddr := itmanager.CreateIPFS(t)
 		addr, client, ms := itmanager.NewDevnet(t, 1, ipfsMAddr)
 		// Set MinimumPieceSize to 1GB so to force failing
 		manager, _, closeManager := itmanager.NewCustomFFSManager(t, ds, client, addr, ms, ipfs, 1024*1024*1024)
@@ -302,16 +300,16 @@ func TestHotStorageFalseWithAlreadyPinnedData(t *testing.T) {
 	tests.RunFlaky(t, func(t *tests.FlakyT) {
 		ctx := context.Background()
 		ds := tests.NewTxMapDatastore()
-		ipfs, ipfsMAddr := it.CreateIPFS(t)
+		ipfs, ipfsMAddr := itmanager.CreateIPFS(t)
 		addr, client, ms := itmanager.NewDevnet(t, 1, ipfsMAddr)
 		// Set MinimumPieceSize to 1GB so to force failing
 		manager, hs, closeManager := itmanager.NewCustomFFSManager(t, ds, client, addr, ms, ipfs, 0)
 		defer closeManager()
-		_, auth, err := manager.Create(context.Background())
+		auth, err := manager.Create(context.Background())
 		require.NoError(t, err)
 		time.Sleep(time.Second * 3) // Wait for funding txn to finish.
 
-		fapi, err := manager.GetByAuthToken(auth)
+		fapi, err := manager.GetByAuthToken(auth.Token)
 		require.NoError(t, err)
 
 		r := rand.New(rand.NewSource(22))

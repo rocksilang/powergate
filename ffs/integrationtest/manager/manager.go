@@ -25,7 +25,6 @@ import (
 
 	httpapi "github.com/ipfs/go-ipfs-http-client"
 	dealsModule "github.com/textileio/powergate/deals/module"
-	paych "github.com/textileio/powergate/paych/lotus"
 	txndstr "github.com/textileio/powergate/txndstransform"
 	walletModule "github.com/textileio/powergate/wallet/module"
 )
@@ -40,10 +39,10 @@ func NewAPI(t tests.TestingTWithCleanup, numMiners int) (*httpapi.HttpApi, *apis
 	ipfs, ipfsMAddr := CreateIPFS(t)
 	addr, clientBuilder, ms := NewDevnet(t, numMiners, ipfsMAddr)
 	manager, closeManager := NewFFSManager(t, ds, clientBuilder, addr, ms, ipfs)
-	_, auth, err := manager.Create(context.Background())
+	auth, err := manager.Create(context.Background())
 	require.NoError(t, err)
 	time.Sleep(time.Second * 3) // Wait for funding txn to finish.
-	fapi, err := manager.GetByAuthToken(auth)
+	fapi, err := manager.GetByAuthToken(auth.Token)
 	require.NoError(t, err)
 	client, cls, err := clientBuilder(context.Background())
 	require.NoError(t, err)
@@ -108,9 +107,7 @@ func NewCustomFFSManager(t require.TestingT, ds datastore.TxnDatastore, cb lotus
 	wm, err := walletModule.New(cb, masterAddr, *big.NewInt(iWalletBal), false, "")
 	require.NoError(t, err)
 
-	pm := paych.New(cb)
-
-	manager, err := manager.New(ds, wm, pm, dm, sched, false, true)
+	manager, err := manager.New(ds, wm, dm, sched, false, true)
 	require.NoError(t, err)
 	err = manager.SetDefaultStorageConfig(ffs.StorageConfig{
 		Hot: ffs.HotConfig{

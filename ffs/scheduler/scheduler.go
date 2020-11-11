@@ -81,6 +81,7 @@ type retrievalDaemon struct {
 	evaluateQueue chan struct{}
 }
 
+// GCConfig provides configuration for FFS GC.
 type GCConfig struct {
 	StageGracePeriod time.Duration
 	AutoGCInterval   time.Duration
@@ -174,6 +175,7 @@ func (s *Scheduler) Cancel(jid ffs.JobID) error {
 	return nil
 }
 
+// GCStaged runs a unpinned garbage collection of stage-pins.
 func (s *Scheduler) GCStaged(ctx context.Context) ([]cid.Cid, error) {
 	return s.gcStaged(ctx, 0)
 }

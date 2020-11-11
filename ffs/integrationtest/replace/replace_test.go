@@ -93,7 +93,7 @@ func TestDoubleReplace(t *testing.T) {
 		it.RequireEventualJobState(t, fapi, jid, ffs.Success)
 	}
 
-	// Test the same workflow in different APIs instaneces,
+	// Test the same workflow in different APIs instances,
 	// but same hot & cold layer.
 	testAddThenReplace()
 	testAddThenReplace()

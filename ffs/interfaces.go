@@ -36,27 +36,31 @@ type DealRecordsManager interface {
 
 // HotStorage is a fast storage layer for Cid data.
 type HotStorage interface {
-	// Add adds io.Reader data ephemerally (not pinned).
-	Add(context.Context, io.Reader) (cid.Cid, error)
+	// Stage adds io.Reader and stage-pins it.
+	Stage(context.Context, io.Reader) (cid.Cid, error)
 
-	// Remove removes a stored Cid.
-	Remove(context.Context, cid.Cid) error
+	// Unpin unpins a Cid.
+	Unpin(context.Context, cid.Cid) error
 
 	// Get retrieves a stored Cid data.
 	Get(context.Context, cid.Cid) (io.Reader, error)
 
-	// Store stores a Cid. If the data wasn't previously Added,
+	// Pin pins a Cid. If the data wasn't previously Added,
 	// depending on the implementation it may use internal mechanisms
 	// for pulling the data, e.g: IPFS network
-	Store(context.Context, cid.Cid) (int, error)
+	Pin(context.Context, cid.Cid) (int, error)
 
 	// Replace replaces a stored Cid with a new one. It's mostly
 	// thought for mutating data doing this efficiently.
 	Replace(context.Context, cid.Cid, cid.Cid) (int, error)
 
-	// IsStore returns true if the Cid is stored, or false
+	// IsPinned returns true if the Cid is pinned, or false
 	// otherwise.
-	IsStored(context.Context, cid.Cid) (bool, error)
+	IsPinned(context.Context, cid.Cid) (bool, error)
+
+	// GCStaged unpins Cids that are stage-pinned that aren't
+	// contained in a exclude list, and were pinned before a time.
+	GCStaged(context.Context, []cid.Cid, time.Time) ([]cid.Cid, error)
 }
 
 // DealError contains information about a failed deal.

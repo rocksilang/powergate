@@ -134,13 +134,19 @@ func (ci *CoreIpfs) Replace(ctx context.Context, iid ffs.APIID, c1 cid.Cid, c2 c
 		return 0, ErrReplaceFromNotPinned
 	}
 
-	// If c1 has a single reference, which must be from iid, and c2 isn't pinned
-	// then move the pin, which is the fastest way to unpin and pin two cids that might
-	// share part of the dag.
-	if c1refcount == 1 && c2refcount == 0 {
-		if err := ci.ipfs.Pin().Update(ctx, p1, p2); err != nil {
-			return 0, fmt.Errorf("updating pin %s to %s: %s", c1, c2, err)
+	// If c1 has a single reference, which must be from iid...
+	if c1refcount == 1 {
+		// If c2 isn't pinned, then we can move the pin so to unpin c1 and pin c2.
+		if c2refcount == 0 {
+			if err := ci.ipfs.Pin().Update(ctx, p1, p2); err != nil {
+				return 0, fmt.Errorf("updating pin %s to %s: %s", c1, c2, err)
+			}
+		} else { // If c2 is pinned, then we need to unpin c1 (c2 is already pinned by other iid).
+			if err := ci.ipfs.Pin().Rm(ctx, path.IpfsPath(c1), options.Pin.RmRecursive(true)); err != nil {
+				return 0, fmt.Errorf("unpinning cid from ipfs node: %s", err)
+			}
 		}
+
 	} else if c2refcount == 0 {
 		// - c1 is pinned by another iid, so we can't unpin it.
 		// - c2 isn't pinned by anyone, so we should pin it.
@@ -153,7 +159,7 @@ func (ci *CoreIpfs) Replace(ctx context.Context, iid ffs.APIID, c1 cid.Cid, c2 c
 	}
 	// In any case of above if, update the ref counts.
 
-	if err := ci.removeAndUnpinIfApplies(ctx, iid, c1); err != nil {
+	if err := ci.ps.Remove(iid, c1); err != nil {
 		return 0, fmt.Errorf("removing cid in pinstore: %s", err)
 	}
 	if err := ci.ps.Add(iid, c2); err != nil {

@@ -200,6 +200,35 @@ func (ci *CoreIpfs) GCStaged(ctx context.Context, exclude []cid.Cid, olderThan t
 	return unpinLst, nil
 }
 
+func (ci *CoreIpfs) PinnedCids(ctx context.Context) ([]ffs.PinnedCid, error) {
+	ci.lock.Lock()
+	defer ci.lock.Unlock()
+
+	ps, err := ci.ps.GetAll()
+	if err != nil {
+		return nil, fmt.Errorf("getting pins from pinstore: %s", err)
+	}
+
+	res := make([]ffs.PinnedCid, len(ps))
+	for i, pc := range ps {
+		npc := ffs.PinnedCid{
+			Cid:    pc.Cid,
+			APIIDs: make([]ffs.APIIDPinnedCid, len(pc.Pins)),
+		}
+		for j, upc := range pc.Pins {
+			npc.APIIDs[j] = ffs.APIIDPinnedCid{
+				ID:        upc.APIID,
+				Staged:    upc.Staged,
+				CreatedAt: upc.CreatedAt,
+			}
+
+		}
+		res[i] = npc
+	}
+
+	return res, nil
+}
+
 func (ci *CoreIpfs) getGCCandidates(exclude []cid.Cid, olderThan time.Time) ([]cid.Cid, error) {
 	lst, err := ci.ps.GetAllOnlyStaged()
 	if err != nil {

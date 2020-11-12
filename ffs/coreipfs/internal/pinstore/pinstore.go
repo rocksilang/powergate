@@ -245,6 +245,25 @@ func (s *Store) RemoveStaged(c cid.Cid) error {
 	return nil
 }
 
+// GetAll returns all pinned cids.
+func (s *Store) GetAll() ([]PinnedCid, error) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	var res []PinnedCid
+	for _, v := range s.cache {
+		v1 := PinnedCid{
+			Cid:  v.Cid,
+			Pins: make([]Pin, len(v.Pins)),
+		}
+		for i, p := range v.Pins {
+			v1.Pins[i] = p
+		}
+		res = append(res, v1)
+	}
+	return res, nil
+}
+
 // GetAllOnlyStaged returns all cids that only have stage-pins.
 func (s *Store) GetAllOnlyStaged() ([]PinnedCid, error) {
 	s.lock.Lock()

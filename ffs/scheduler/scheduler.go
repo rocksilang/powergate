@@ -180,6 +180,15 @@ func (s *Scheduler) GCStaged(ctx context.Context) ([]cid.Cid, error) {
 	return s.gcStaged(ctx, 0)
 }
 
+// PinnedCids returns the pinned cids from Hot-Storage.
+func (s *Scheduler) PinnedCids(ctx context.Context) ([]ffs.PinnedCid, error) {
+	res, err := s.hs.PinnedCids(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting pinned cids from hot-storage: %s", err)
+	}
+	return res, nil
+}
+
 func (s *Scheduler) gcStaged(ctx context.Context, gracePeriod time.Duration) ([]cid.Cid, error) {
 	s.gcLock.Lock()
 	defer s.gcLock.Unlock()

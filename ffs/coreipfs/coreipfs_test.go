@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"math/rand"
+	"sort"
 	"testing"
 	"time"
 
@@ -364,6 +365,62 @@ func TestTwoStageOnePin(t *testing.T) {
 	require.NoError(t, err)
 	requireCidIsGCable(t, ci, c)    // Now is GCable again.
 	requireRefCount(t, ci, c, 0, 1) // Only iid2 staged.
+}
+
+func TestPinnedCids(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := rand.New(rand.NewSource(22))
+
+	ci, _ := newCoreIPFS(t)
+	data := it.RandomBytes(r, 1500)
+
+	// Stage with iid1
+	iid1 := ffs.NewAPIID()
+	c1, err := ci.Stage(ctx, iid1, bytes.NewReader(data))
+	require.NoError(t, err)
+
+	// Stage with iid2.
+	iid2 := ffs.NewAPIID()
+	_, err = ci.Stage(ctx, iid2, bytes.NewReader(data))
+	require.NoError(t, err)
+
+	// Pin with iid1
+	_, err = ci.Pin(ctx, iid1, c1)
+	require.NoError(t, err)
+
+	// Stage another cid with iid3.
+	data = it.RandomBytes(r, 1500)
+	iid3 := ffs.NewAPIID()
+	c2, err := ci.Stage(ctx, iid3, bytes.NewReader(data))
+	require.NoError(t, err)
+
+	// Get all and check.
+	all, err := ci.PinnedCids(ctx)
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+
+	// Order the slices so we have predictable results
+	// for comparing. In position 0 is c2, and 1 is c1.
+	sort.Slice(all, func(a, b int) bool {
+		return all[a].Cid.String() < all[b].Cid.String()
+	})
+
+	// c2 is staged by iid3.
+	require.Equal(t, c2, all[0].Cid)
+	require.Len(t, all[0].APIIDs, 1)
+	require.Equal(t, iid3, all[0].APIIDs[0].ID)
+	require.True(t, all[0].APIIDs[0].Staged)
+
+	// c1 is:
+	// - pinned by iid1
+	// - staged by iid2
+	require.Equal(t, c1, all[1].Cid)
+	require.Len(t, all[1].APIIDs, 2)
+	require.Equal(t, iid1, all[1].APIIDs[0].ID)
+	require.False(t, all[1].APIIDs[0].Staged)
+	require.Equal(t, iid2, all[1].APIIDs[1].ID)
+	require.True(t, all[1].APIIDs[1].Staged)
 }
 
 func TestGCSingleAPIID(t *testing.T) {

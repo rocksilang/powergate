@@ -61,6 +61,9 @@ type HotStorage interface {
 	// GCStaged unpins Cids that are stage-pinned that aren't
 	// contained in a exclude list, and were pinned before a time.
 	GCStaged(context.Context, []cid.Cid, time.Time) ([]cid.Cid, error)
+
+	// PinnedCids returns pinned cids information.
+	PinnedCids(context.Context) ([]PinnedCid, error)
 }
 
 // DealError contains information about a failed deal.
@@ -142,4 +145,17 @@ type MinerSelectorFilter struct {
 type MinerProposal struct {
 	Addr       string
 	EpochPrice uint64
+}
+
+// PinnedCid provides information about a pinned Cid.
+type PinnedCid struct {
+	Cid    cid.Cid
+	APIIDs []APIIDPinnedCid
+}
+
+// APIIDPinnedCid has information about a Cid pinned by a user.
+type APIIDPinnedCid struct {
+	ID        APIID
+	Staged    bool
+	CreatedAt int64
 }
